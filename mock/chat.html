@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Mock Chat (demo)</title>
+<!-- A tiny stand-in for ChatGPT web. It reproduces only the DOM contract the agent
+     relies on (data-testid / aria / data-message-author-role), so the same
+     config/selectors.yaml drives both the mock and the real site.
+     Query params: tick=<ms per chunk>, research_ms=<busy time>, clarify=0 to skip questions. -->
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f7f7f8; }
+  main { max-width: 820px; margin: 0 auto; padding: 24px 16px 140px; }
+  .turn { background: #fff; border-radius: 10px; padding: 12px 16px; margin: 10px 0; }
+  [data-message-author-role="user"] { background: #e8f0fe; }
+  .research-status { color: #555; font-style: italic; margin: 10px 0; }
+  form { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 1px solid #ddd;
+         padding: 12px; display: flex; gap: 8px; align-items: center; justify-content: center; }
+  #prompt-textarea { width: 560px; min-height: 24px; border: 1px solid #ccc; border-radius: 8px; padding: 8px; }
+  #menu { position: fixed; bottom: 64px; background: #fff; border: 1px solid #ccc; border-radius: 8px; }
+  #menu [role] { padding: 8px 14px; cursor: pointer; }
+  .pill { background: #dbeafe; border: 0; border-radius: 12px; padding: 4px 10px; }
+</style>
+</head>
+<body>
+<main id="thread" aria-label="Conversation"></main>
+<form id="composer" onsubmit="return false">
+  <button type="button" data-testid="composer-plus-btn" aria-label="Add files and more">+</button>
+  <div id="menu" role="menu" hidden>
+    <div role="menuitemradio" aria-checked="false" id="dr-item">Deep research</div>
+    <div role="menuitemradio" aria-checked="false">Create image</div>
+  </div>
+  <span id="pill-slot"></span>
+  <div id="prompt-textarea" contenteditable="true" role="textbox" aria-label="Message ChatGPT"></div>
+  <button type="button" data-testid="send-button" aria-label="Send prompt">Send</button>
+  <button type="button" data-testid="stop-button" aria-label="Stop streaming" hidden>Stop</button>
+</form>
+<script>
+const params = new URLSearchParams(location.search);
+const TICK = Number(params.get('tick') || 40);
+const RESEARCH_MS = Number(params.get('research_ms') || 2500);
+const CLARIFY = params.get('clarify') !== '0';
+const $ = (s) => document.querySelector(s);
+let deep = false, phase = 'idle', topic = '';
+
+const esc = (s) => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+const inline = (s) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                            .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2">$1</a>');
+function mdToHtml(md) {
+  let html = '', inList = false;
+  const close = () => { if (inList) { html += '</ul>'; inList = false; } };
+  for (const line of md.split('\n')) {
+    let m;
+    if ((m = line.match(/^(#{1,3})\s+(.*)/))) { close(); html += `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`; }
+    else if ((m = line.match(/^[-*]\s+(.*)/))) { if (!inList) { html += '<ul>'; inList = true; } html += `<li>${inline(m[1])}</li>`; }
+    else if (!line.trim()) close();
+    else { close(); html += `<p>${inline(line)}</p>`; }
+  }
+  close();
+  return html;
+}
+
+function addTurn(role, text) {
+  const el = document.createElement('div');
+  el.className = 'turn';
+  el.setAttribute('data-message-author-role', role);
+  const body = document.createElement('div');
+  body.className = 'markdown';
+  if (text) body.innerHTML = role === 'user' ? `<p>${esc(text)}</p>` : mdToHtml(text);
+  el.appendChild(body);
+  $('#thread').appendChild(el);
+  return el;
+}
+
+function setBusy(b) { $('[data-testid="stop-button"]').hidden = !b; $('[data-testid="send-button"]').hidden = b; }
+
+function stream(md, done) {
+  const el = addTurn('assistant', '');
+  const body = el.querySelector('.markdown');
+  const words = md.split(/(\s+)/);
+  let i = 0;
+  setBusy(true);
+  const timer = setInterval(() => {
+    i = Math.min(words.length, i + 12);
+    body.innerHTML = mdToHtml(words.slice(0, i).join(''));
+    window.scrollTo(0, document.body.scrollHeight);
+    if (i >= words.length) {
+      clearInterval(timer);
+      const copy = document.createElement('button');
+      copy.type = 'button'; copy.textContent = 'Copy';
+      copy.setAttribute('data-testid', 'copy-turn-action-button'); copy.setAttribute('aria-label', 'Copy');
+      copy.onclick = () => navigator.clipboard.writeText(md);
+      el.appendChild(copy);
+      setBusy(false);
+      done && done();
+    }
+  }, TICK);
+}
+
+function setDeep(on) {
+  deep = on;
+  $('#dr-item').setAttribute('aria-checked', String(on));
+  $('#pill-slot').innerHTML = on
+    ? '<button type="button" class="pill" aria-label="Deep research, click to remove">Deep research ×</button>' : '';
+  if (on) $('#pill-slot button').onclick = () => setDeep(false);
+}
+
+const title = (t) => t.replace(/\b\w/g, c => c.toUpperCase());
+function report(t) {
+  return [`# Research report: ${t}`, '', '## Executive summary',
+    `This report reviews the current landscape for ${t}. It compares the leading options on capability, pricing, ease of use and integration, and highlights where each one fits best for small teams and growing businesses.`,
+    '', '## Key findings',
+    `- **Market leaders** dominate on breadth of data, but newer tools win on workflow and AI assistance for ${t}.`,
+    '- **Pricing** ranges from free tiers to enterprise plans; most teams land in the mid tier.',
+    '- **Integration** with analytics, CMS and reporting is the main differentiator in practice.',
+    '- **AI features** (content briefs, clustering, auto-audits) are now table stakes.',
+    '', '## Comparison',
+    `Across the options reviewed, the strongest all-round choice depends on team size. Solo creators benefit from simple, affordable tools, while agencies need multi-client reporting, API access and white-labelling. For ${t}, a two-tool stack (one research suite plus one on-page optimiser) is the most common pattern.`,
+    '', '## Recommendations',
+    '- Start with a free tier to validate the workflow before committing.',
+    '- Prioritise data accuracy and integration over feature count.',
+    '- Re-evaluate every six months; this market moves quickly.',
+    '', '## Sources',
+    '- [Example industry survey](https://example.com/survey)',
+    '- [Example vendor comparison](https://example.com/comparison)'].join('\n');
+}
+function blog(t) {
+  return [`# ${title(t)}: A Practical Guide`, '',
+    `Choosing the right approach to ${t} can save hours every week. Here is a clear, practical summary of what the research shows and how to act on it.`,
+    '', '## Why it matters',
+    'The right tools turn raw data into decisions. The wrong ones add noise, cost and busywork.',
+    '', '## What to look for',
+    '- **Accurate data** you can trust.', '- **Integrations** with the tools you already use.',
+    '- **AI assistance** that speeds up the boring parts.',
+    '', '## Our recommendation',
+    'Start small, measure results, and scale up only when the workflow proves itself. A focused two-tool stack beats an expensive all-in-one for most teams.',
+    '', '## Conclusion',
+    `With a clear goal and the right shortlist, ${t} becomes a repeatable process rather than a guessing game.`].join('\n');
+}
+
+function respond(text) {
+  if (deep && phase === 'idle') {
+    topic = text.replace(/^research\s+/i, '').replace(/[.?!]+$/, '');
+    if (CLARIFY) {
+      phase = 'clarifying';
+      stream(`Before I start, could you clarify the scope: should I focus on free tools, paid tools, or both, and for which region?`);
+      return;
+    }
+  }
+  if (deep && (phase === 'clarifying' || phase === 'idle')) {
+    phase = 'researching';
+    const status = document.createElement('div');
+    status.className = 'research-status'; status.setAttribute('role', 'status');
+    status.textContent = 'Researching… reading sources';
+    $('#thread').appendChild(status);
+    setBusy(true);
+    setTimeout(() => { status.remove(); stream(report(topic), () => { phase = 'done'; setDeep(false); }); }, RESEARCH_MS);
+    return;
+  }
+  if (/blog post/i.test(text)) { stream(blog(topic || 'your topic')); return; }
+  topic = topic || text;
+  stream(`Here is a short answer about ${text}.`);
+}
+
+function send() {
+  const box = $('#prompt-textarea');
+  const text = box.innerText.trim();
+  if (!text) return;
+  addTurn('user', text);
+  box.textContent = '';
+  if (!location.hash) history.replaceState(null, '', location.pathname + location.search + '#/c/mock-' + Date.now());
+  respond(text);
+}
+
+$('[data-testid="send-button"]').onclick = send;
+$('#prompt-textarea').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+$('[data-testid="composer-plus-btn"]').onclick = () => { $('#menu').hidden = !$('#menu').hidden; };
+$('#dr-item').onclick = () => { setDeep(true); $('#menu').hidden = true; };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#menu').hidden = true; });
+</script>
+</body>
+</html>

@@ -1,0 +1,88 @@
+# DOM-first locators, kept in one place so a UI change is a one-line patch.
+#
+# Each key maps to an ordered list of strategies. The resolver tries them in
+# order and uses the first one that resolves to a *visible* element.
+# Strategy keys:
+#   role (+ name)  -> page.get_by_role(role, name=...)        (preferred: accessibility tree)
+#   test_id        -> page.get_by_test_id(...)                  (data-testid)
+#   label / placeholder / text
+#   css            -> page.locator(css)                         (last resort)
+#   within: <css>  -> optional scope for any strategy
+# A value starting with "re:" is a case-insensitive regex.
+# If every strategy fails, the screenshot fallback hook runs (see fallback.py).
+
+chatgpt:
+  message_body_css: ".markdown"          # rendered Markdown inside an assistant turn
+  logged_out_markers:
+    - test_id: login-button
+    - role: button
+      name: "re:^log in$"
+  composer:
+    - css: "#prompt-textarea"
+    - role: textbox
+  send_button:
+    - test_id: send-button
+    - role: button
+      name: "re:^send( prompt)?$"
+  tools_menu_button:
+    - test_id: composer-plus-btn
+    - role: button
+      name: "re:add files|add photos|tools"
+  deep_research_option:
+    - role: menuitemradio
+      name: "re:deep research"
+    - role: menuitem
+      name: "re:deep research"
+    - text: "re:^deep research$"
+  deep_research_active:                  # the pill shown in the composer once selected
+    - role: button
+      name: "re:deep research"
+      within: "form"
+  deep_research_remove:
+    - role: button
+      name: "re:remove.*deep research|deep research.*remove"
+  busy_indicators:                       # any visible => still working
+    - test_id: stop-button
+    - role: button
+      name: "re:^stop"
+    - text: "re:^(researching|research in progress)"
+  assistant_messages:
+    - css: '[data-message-author-role="assistant"]'
+  copy_button:
+    - test_id: copy-turn-action-button
+    - role: button
+      name: "re:^copy$"
+
+wordpress:
+  editor_frame_name: editor-canvas       # Gutenberg renders the canvas in an iframe (WP 6.3+)
+  dismiss_modal:                         # "Welcome to the block editor" guide
+    - role: button
+      name: "re:^close$"
+      within: '[role="dialog"]'
+  title:
+    - role: textbox
+      name: "re:^add title$"
+    - css: ".editor-post-title__input"
+  body:
+    - css: '[aria-label^="Empty block"]'
+    - role: button
+      name: "re:^add default block$"
+    - css: ".block-editor-default-block-appender__content"
+  content_area:
+    - css: ".is-root-container"
+  save_draft:
+    - role: button
+      name: "re:^save draft$"
+    - css: ".editor-post-save-draft"
+  saved_indicator:
+    - css: ".editor-post-saved-state.is-saved"
+    - role: button
+      name: "re:^saved$"
+  publish_button:
+    - css: ".editor-post-publish-panel__toggle"
+    - role: button
+      name: "re:^publish$"
+  publish_confirm:
+    - css: ".editor-post-publish-panel__header-publish-button button"
+  published_indicator:
+    - text: "re:is now live"
